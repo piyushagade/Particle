@@ -4,8 +4,8 @@
 $ git clone https://github.com/piyushagade/Particle
 
 ## Pushing updates/changes to remote repo
-$ git add .
-$ git commit -m "ENTER A COMMIT MESSAGE IN PRESENT TENSE"
+$ git add . <br>
+$ git commit -m "ENTER A COMMIT MESSAGE IN PRESENT TENSE"<br>
 $ git push -u origin master
 
 ## Pulling update from remote repo to local repo
@@ -15,10 +15,10 @@ $ git branch
 
 The checked out branch will have a * before the name.
 
-If required, switch to 'master' branch using:
+If required, switch to 'master' branch using: <br>
 $ git checkout master
 
-Once on master, we are ready to pull updates:
+Once on master, we are ready to pull updates: <br>
 $ git pull origin master
 
 Now you are all up to date with the remote repo.
