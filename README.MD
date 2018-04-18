@@ -22,3 +22,6 @@ Once on master, we are ready to pull updates: <br>
 $ git pull origin master
 
 Now you are all up to date with the remote repo.
+
+A good learning resource: <br>
+http://rogerdudler.github.io/git-guide/
