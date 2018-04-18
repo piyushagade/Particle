@@ -1,7 +1,7 @@
 # Particle
 
 ## Cloning this repository
-$ git clone https://github.com/libgit2/libgit2
+$ git clone https://github.com/piyushagade/Particle
 
 ## Pushing updates/changes to remote repo
 $ git add .
