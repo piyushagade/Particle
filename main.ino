@@ -4,16 +4,16 @@
 // Variables
 int led = D7;
 
-// Sensors
+// I2C addresses
 #define rtd_address 102
-#define ph_address 102
-#define do_address 102
-#define ec_address 102
+#define ph_address 99
+#define do_address 97
+#define ec_address 100
 
 // Server
 TCPClient client;
-byte server[] = { 34, 210, 238, 35 }; // AWS
-String ip = "34.210.238.35";
+byte server[] = { 34, 210, 238, 35 };       // AWS
+String ip = "34.210.238.35";                // AWS
 int port = 1221;
 
 char computerdata[20];           // Data incoming from a computer   
