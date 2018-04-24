@@ -1,6 +1,6 @@
 #include "Particle.h"
 //#include "Wire.h"                //enable I2C.
-#define address 102             //default I2C ID number for EZO RTD Circuit.
+#define rtd_address 102             //default I2C ID number for EZO RTD Circuit.
 
 
 
@@ -38,7 +38,7 @@ void loop(){
         else time_=300;                                                            //if any other command has been sent we wait only 300ms.
        
     
-        Wire.beginTransmission(address); //call the circuit by its ID number.  
+        Wire.beginTransmission(rtd_address); //call the circuit by its ID number.  
         Wire.write(computerdata);        //transmit the command that was sent through the serial port.
         Wire.endTransmission();          //end the I2C data transmission. 
         
@@ -48,7 +48,7 @@ void loop(){
           
             delay(time_);                    //wait the correct amount of time for the circuit to complete its instruction. 
             
-            Wire.requestFrom(address,20,1); //call the circuit and request 20 bytes (this may be more than we need)
+            Wire.requestFrom(rtd_address,20,1); //call the circuit and request 20 bytes (this may be more than we need)
             code=Wire.read();               //the first byte is the response code, we read this separately.  
             
             switch (code){                  //switch case based on what the response code is.  
