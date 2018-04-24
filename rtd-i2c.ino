@@ -1,13 +1,3 @@
-//**THIS CODE WILL WORK ON ANY ARDUINO**
-//This code was written to be easy to understand.
-//Modify this code as you see fit.
-//This code will output data to the Arduino serial monitor.
-//Type commands into the Arduino serial monitor to control the RTD circuit.
-
-//An Arduino UNO was used to test this code.
-//This code was written in the Arduino 1.8.5 IDE
-//This code was last tested 1/2018
-
 #include "Particle.h"
 //#include "Wire.h"                //enable I2C.
 #define address 102             //default I2C ID number for EZO RTD Circuit.
