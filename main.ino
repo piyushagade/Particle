@@ -6,6 +6,9 @@ int led = D7;
 
 // Sensors
 #define rtd_address 102
+#define ph_address 102
+#define do_address 102
+#define ec_address 102
 
 // Server
 TCPClient client;
@@ -35,9 +38,15 @@ void setup(){
 void loop(){
      // Collect data
     float rtd_float = getData("rtd");
+    float ph_float = getData("ph");
+    float do_float = getData("do");
+    float ec_float = getData("ec");
 
     // Send data
     sendData("rtd", String(rtd_float));
+    sendData("ph", String(ph_float));
+    sendData("do", String(do_float));
+    sendData("ec", String(ec_float));
 
     // Wait before iterating and taking another reading from sensors
     delay(30000);
@@ -54,61 +63,58 @@ void togglePower(){
 
 // Collect sensor data
 float getData(String sensor_type){
-    if (strcmp(sensor_type, "rtd") == 0) {
-        String cmd = "r";
-        
-        // computerdata = tolower(computerdata);
-        if(cmd[0]=='c'||cmd[0]=='r')
-            time_=600;                                          // If a command has been sent to calibrate or take a reading we wait 600ms so that the circuit has time to take the reading.  
-        else 
-            time_=300;                                          // If any other command has been sent we wait only 300ms.
-       
-        
-        Wire.beginTransmission(rtd_address);                    // Call the circuit by its ID number.  
-        Wire.write(cmd);                                        // Transmit the command that was sent through the serial port.
-        Wire.endTransmission();                                 // End the I2C data transmission. 
-        
+    int sensor_address;
+    char sensor_data[20];
     
-        if (strcmp(computerdata, "sleep") != 0) {               // If the command that has been sent is NOT the sleep command, wait the correct amount of time and request data.
-            delay(time_);                                       // Wait the correct amount of time for the circuit to complete its instruction. 
-            
-            Wire.requestFrom(rtd_address,20,1);                 // Call the circuit and request 20 bytes (this may be more than we need)
-            code=Wire.read();                                   // The first byte is the response code, we read this separately.  
-            
-            // switch (code){                                      // Switch case based on what the response code is.  
-            //     case 1:                                         // Successful command.
-            //         Serial.println("Success");  
-            //         break;                        
-                
-            //     case 2:                                         // Command failed
-            //         Serial.println("Failed");    
-            //         break;                       
-                
-            //     case 254:                                       // Command has not yet finished calculations.
-            //         Serial.println("Pending");
-            //         break;                         
-                
-            //     case 255:                                       // There is no more data to send.
-            //         Serial.println("No Data");   
-            //         break;                         
-            // }
-            
-            // Read the response of the command sent above
-            while(Wire.available()){                            // While there are more bytes to receive.  
-                in_char = Wire.read();                          // Read the next byte.
-                RTD_data[i] = in_char;                           
-                i += 1;                                           
-                if(in_char == 0){                                 // If the byte is a null command. 
-                    i = 0;                                        // Reset the counter i to 0.
-                    Wire.endTransmission();                     // End the I2C data transmission.
-                    break;
-                }
+    // Sensor specific actions
+    if (strcmp(sensor_type, "rtd") == 0) {
+        sensor_address = rtd_address;
+    }
+    else if (strcmp(sensor_type, "ph") == 0) {
+        sensor_address = ph_address;
+    }
+    else if (strcmp(sensor_type, "do") == 0) {
+        sensor_address = do_address;
+    }
+    else if (strcmp(sensor_type, "ec") == 0) {
+        sensor_address = ec_address;
+    }
+        
+    // Command to be send to the device
+    String cmd = "r";
+    
+    if(cmd[0] == 'c'|| cmd[0] == 'r')
+        time_ = 600;                                          // If a command has been sent to calibrate or take a reading we wait 600ms so that the circuit has time to take the reading.  
+    else 
+        time_ = 300;                                          // If any other command has been sent we wait only 300ms.
+    
+    // Send command to the sensor
+    Wire.beginTransmission(sensor_address);                    // Call the circuit by its ID number.  
+    Wire.write(cmd);                                        // Transmit the command that was sent through the serial port.
+    Wire.endTransmission();                                 // End the I2C data transmission. 
+    
+    if (strcmp(computerdata, "sleep") != 0) {               // If the command that has been sent is NOT the sleep command, wait the correct amount of time and request data.
+        delay(time_);                                       // Wait the correct amount of time for the circuit to complete its instruction. 
+        
+        Wire.requestFrom(sensor_address, 20, 1);                 // Call the circuit and request 20 bytes (this may be more than we need)
+        code = Wire.read();                                   // The first byte is the response code, we read this separately.  
+        
+        // Read the response of the command sent above
+        while(Wire.available()){                            // While there are more bytes to receive.  
+            in_char = Wire.read();                          // Read the next byte.
+            sensor_data[i] = in_char;                           
+            i += 1;                                           
+            if(in_char == 0){                                 // If the byte is a null command. 
+                i = 0;                                        // Reset the counter i to 0.
+                Wire.endTransmission();                     // End the I2C data transmission.
+                break;
             }
-                
-            Particle.publish("rtd", String(RTD_data));
         }
-        return atof(RTD_data); 
-    }    
+            
+        Particle.publish(sensor_type, String(sensor_data));
+    }
+    return atof(sensor_data);
+
     delay(1000);
 }
 
