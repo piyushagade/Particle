@@ -23,7 +23,10 @@ $ git pull origin master
 
 Now you are all up to date with the remote repo.
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 42e329476d7e18f3ee1c0e8b370d556d383634c2
 ## Branching
 Branches are used to develop features isolated from each other. The master branch is the "default" branch when you create a repository. Use other branches for development and merge them back to the master branch upon completion.
 
@@ -45,11 +48,14 @@ $ git merge awesome_feature
 Before merging changes, you can also preview them by using (here master is your target branch, and new_feature is the source branch): <br>
 $ git diff new_feature master
 
+<<<<<<< HEAD
 ## Reset and discard local changes
 If you want to drop all your local changes and commits, fetch the latest history from the server and point your local master branch at it: <br>
 git fetch origin
 git reset --hard orgin/master
 
 
+=======
+>>>>>>> 42e329476d7e18f3ee1c0e8b370d556d383634c2
 A good learning resource: <br>
 http://rogerdudler.github.io/git-guide/
