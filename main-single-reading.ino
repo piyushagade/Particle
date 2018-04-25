@@ -36,7 +36,7 @@ void setup(){
 
 // Device loop
 void loop(){
-     // Collect data
+    // Collect data
     float rtd_float = getData("rtd");
     float ph_float = getData("ph");
     float do_float = getData("do");
@@ -48,7 +48,7 @@ void loop(){
     sendData("do", String(do_float));
     sendData("ec", String(ec_float));
 
-    // Wait before iterating and taking another reading from sensors
+    // Wait before iterating and taking another round of readings from sensors
     delay(30000);
 }
 
@@ -134,14 +134,38 @@ void sendData(String sensor_type, String endpoint){
     disconnect();
 }
 
+// Get time from the server
+void getTime(){
+    TCPClient client;
+    
+    // Connect and send data to the server
+    if (client.connect(ip, port)){
+        blink(led, 1000, 1000, 1);
+        client.println("GET /time HTTP/1.0");
+        client.println("Host: " + ip);
+        client.println("Content-Length: 0");
+        client.println();
+
+        // Read server response
+        if (client.available()){
+            char c = client.read();
+            Serial.print(c);
+        }
+        
+        // Disconnect from the server
+        disconnect();
+    }
+}
+
 void publish(char key[], char value[]){
     Particle.publish(String(key), String(value));
 }
 
-void connect(){    
+bool connect(){    
     if (client.connect(ip, port)){
         // beacon(led, 4);
         Particle.publish("connected", "True");
+        return true;
     }
     else{
         // blink(led, 2500, 500, 4);
