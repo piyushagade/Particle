@@ -16,8 +16,6 @@ byte server[] = { 34, 210, 238, 35 };       // AWS
 String ip = "34.210.238.35";                // AWS
 int port = 1221;
 
-// Command mode
-bool command_mode = false;
 char computerdata[20];           // Data incoming from a computer   
 byte received_from_computer=0;   // Length of incoming data
 byte serial_event=0;             // A flag to indicate if data was received from the computer
@@ -38,21 +36,17 @@ void setup(){
 
 // Device loop
 void loop(){
-    if(command_mode){
-        getData("rtd", true);
-    }
-
     // Collect data
-    float rtd_float = getData("rtd", false);
-    // float ph_float = getData("ph", false);
-    // float do_float = getData("do", false);
-    // float ec_float = getData("ec", false);
+    float rtd_float = getData("rtd");
+    float ph_float = getData("ph");
+    float do_float = getData("do");
+    float ec_float = getData("ec");
 
     // Send data
     sendData("rtd", String(rtd_float));
-    // sendData("ph", String(ph_float));
-    // sendData("do", String(do_float));
-    // sendData("ec", String(ec_float));
+    sendData("ph", String(ph_float));
+    sendData("do", String(do_float));
+    sendData("ec", String(ec_float));
 
     // Wait before iterating and taking another round of readings from sensors
     delay(30000);
@@ -68,10 +62,9 @@ void togglePower(){
 }
 
 // Collect sensor data
-float getData(String sensor_type, bool command_mode){
+float getData(String sensor_type){
     int sensor_address;
     char sensor_data[20];
-    String cmd;
     
     // Sensor specific actions
     if (strcmp(sensor_type, "rtd") == 0) {
@@ -86,58 +79,43 @@ float getData(String sensor_type, bool command_mode){
     else if (strcmp(sensor_type, "ec") == 0) {
         sensor_address = ec_address;
     }
-
-    if(command_mode && serial_event == true){
-        computerdata[0] = tolower(computerdata[0]);                               
-        cmd = computerdata;
-    }
-    else{
-        cmd = "r";
-    }                               
+        
+    // Command to be send to the device
+    String cmd = "r";
     
-    // Set appropriate delay
     if(cmd[0] == 'c'|| cmd[0] == 'r')
-        time_ = 600;                                            // If a command has been sent to calibrate or take a reading we wait 600ms so that the circuit has time to take the reading.  
+        time_ = 600;                                          // If a command has been sent to calibrate or take a reading we wait 600ms so that the circuit has time to take the reading.  
     else 
-        time_ = 300;                                            // If any other command has been sent we wait only 300ms.
+        time_ = 300;                                          // If any other command has been sent we wait only 300ms.
     
     // Send command to the sensor
-    Wire.beginTransmission(sensor_address);                     // Call the circuit by its ID number.  
-    Wire.write(cmd);                                            // Transmit the command that was sent through the serial port.
-    Wire.endTransmission();                                     // End the I2C data transmission. 
+    Wire.beginTransmission(sensor_address);                    // Call the circuit by its ID number.  
+    Wire.write(cmd);                                        // Transmit the command that was sent through the serial port.
+    Wire.endTransmission();                                 // End the I2C data transmission. 
     
-    if (strcmp(cmd, "sleep") != 0) {                            // If the command that has been sent is NOT the sleep command, wait the correct amount of time and request data.
-        delay(time_);                                           // Wait the correct amount of time for the circuit to complete its instruction. 
+    if (strcmp(computerdata, "sleep") != 0) {               // If the command that has been sent is NOT the sleep command, wait the correct amount of time and request data.
+        delay(time_);                                       // Wait the correct amount of time for the circuit to complete its instruction. 
         
-        Wire.requestFrom(sensor_address, 20, 1);                // Call the circuit and request 20 bytes (this may be more than we need)
-        code = Wire.read();                                     // The first byte is the response code, we read this separately.  
+        Wire.requestFrom(sensor_address, 20, 1);                 // Call the circuit and request 20 bytes (this may be more than we need)
+        code = Wire.read();                                   // The first byte is the response code, we read this separately.  
         
         // Read the response of the command sent above
-        while(Wire.available()){                                // While there are more bytes to receive.  
-            in_char = Wire.read();                              // Read the next byte.
+        while(Wire.available()){                            // While there are more bytes to receive.  
+            in_char = Wire.read();                          // Read the next byte.
             sensor_data[i] = in_char;                           
             i += 1;                                           
-            if(in_char == 0){                                   // If the byte is a null command. 
-                i = 0;                                          // Reset the counter i to 0.
-                Wire.endTransmission();                         // End the I2C data transmission.
+            if(in_char == 0){                                 // If the byte is a null command. 
+                i = 0;                                        // Reset the counter i to 0.
+                Wire.endTransmission();                     // End the I2C data transmission.
                 break;
             }
         }
             
-        if(!command_mode)
-            Particle.publish(sensor_type, String(sensor_data));
-        else
-            Serial.println(cmd + ": " + String(sensor_data));
+        Particle.publish(sensor_type, String(sensor_data));
     }
-    
-    delay(1000);
-    if(!command_mode)
-        return atof(sensor_data);
-    else{
-        serial_event = false;
-        return 0.0;
-    }
+    return atof(sensor_data);
 
+    delay(1000);
 }
 
 // Send data to the server
