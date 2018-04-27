@@ -3,6 +3,7 @@
 
 // Variables
 int led = D7;
+int command_mode_button = D6;
 
 // I2C addresses
 #define rtd_address 102
@@ -32,34 +33,47 @@ bool cellular_active = true;
 // Device setup
 void setup(){
     pinMode(led, OUTPUT);         // Set led pin as output
+    pinMode(command_mode_button, INPUT);         // Set led pin as output
+    
     Serial.begin(9600);           // Enable serial port.  
     Wire.begin();                 // Enable I2C.
 }
 
 // Device loop
 void loop(){
-    // Read server response
-    if(command_mode){
-        getData("rtd", true);
+    if(digitalRead(command_mode_button) == HIGH)
+        command_mode = false;
+    else
+        command_mode = true;
+    
+    if(command_mode){             // Check if the device needs to be in command mode, in command mode, the device waits for the serial monitor for commands.
+        getData("rtd", true);     // Put RTD sensor to command mode
         delay(500);
     }
     else{
-        // Collect data
-        float rtd_float = getData("rtd", false);
-        // float ph_float = getData("ph", false);
-        // float do_float = getData("do", false);
-        // float ec_float = getData("ec", false);
-    
-        // Send data
-        sendData("rtd", String(rtd_float));
-        getTime();
-        // sendData("ph", String(ph_float));
-        // sendData("do", String(do_float));
-        // sendData("ec", String(ec_float));
-    
+        // Get data from the sensors
+        getSensorData();
+        
         // Wait before iterating and taking another round of readings from sensors
-        delay(10000);
+        delay(30000);
     }
+}
+
+void getSensorData(){
+    // Collect data from the sensors
+    float rtd_float = getData("rtd", false);
+    // float ph_float = getData("ph", false);
+    // float do_float = getData("do", false);
+    // float ec_float = getData("ec", false);
+
+    // Send data to the server
+    sendData("rtd", String(rtd_float));
+    // sendData("ph", String(ph_float));
+    // sendData("do", String(do_float));
+    // sendData("ec", String(ec_float));
+    
+    // Get time information from the server
+    getTime("hour");
 }
 
 // Toggle cellular on the device
@@ -160,22 +174,23 @@ void sendData(String sensor_type, String endpoint){
     
     // Disconnect from the server
     disconnect();
-    
 }
 
 // Get time from the server
-void getTime(){
+void getTime(String type){
     TCPClient client;
     
     // Connect and send data to the server
     if (client.connect(ip, port)){
         blink(led, 1000, 1000, 1);
-        client.println("GET /time HTTP/1.0");
+        client.println("GET /time/" + type + " HTTP/1.0");
         client.println("Host: " + ip);
         client.println("Content-Length: 0");
         client.println();
         
         String response = getResponse(client);
+        
+        Serial.println(type + ": " + response);
 
         // Disconnect from the server
         disconnect();
@@ -194,7 +209,7 @@ String getResponse(TCPClient client){
         
         // Remove HTTP header
         if(response.endsWith("\n"))
-          response="";
+            response = "";
     }
     return response;
 }
