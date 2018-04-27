@@ -130,7 +130,7 @@ float getData(String sensor_type, bool command_mode){
             
         if(!command_mode){
             Particle.publish(sensor_type, String(sensor_data));
-            Serial.println(sensor_type + ": " + String(sensor_data));
+            Serial.println("\n" + sensor_type + ": " + String(sensor_data));
         }
         else if(serial_event)
             Serial.println(cmd + ": " + String(sensor_data));
@@ -175,18 +175,28 @@ void getTime(){
         client.println("Content-Length: 0");
         client.println();
         
-        // Wait until the response is avilable
-        while(!client.available());
-        
-        // When the response is available do stuff
-        while(client.available()){
-            char c = client.read();
-            Serial.print(c);
-        }
+        String response = getResponse(client);
 
         // Disconnect from the server
         disconnect();
     }
+}
+
+String getResponse(TCPClient client){
+    String response = "";
+    // Wait until the response is avilable
+    while(!client.available());
+    
+    // When the response is available do stuff
+    while(client.available()){
+        char c = client.read();
+        response += c;
+        
+        // Remove HTTP header
+        if(response.endsWith("\n"))
+          response="";
+    }
+    return response;
 }
 
 void publish(char key[], char value[]){
