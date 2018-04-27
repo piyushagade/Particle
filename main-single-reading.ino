@@ -38,24 +38,28 @@ void setup(){
 
 // Device loop
 void loop(){
+    // Read server response
     if(command_mode){
         getData("rtd", true);
+        delay(500);
     }
-
-    // Collect data
-    float rtd_float = getData("rtd", false);
-    // float ph_float = getData("ph", false);
-    // float do_float = getData("do", false);
-    // float ec_float = getData("ec", false);
-
-    // Send data
-    sendData("rtd", String(rtd_float));
-    // sendData("ph", String(ph_float));
-    // sendData("do", String(do_float));
-    // sendData("ec", String(ec_float));
-
-    // Wait before iterating and taking another round of readings from sensors
-    delay(30000);
+    else{
+        // Collect data
+        float rtd_float = getData("rtd", false);
+        // float ph_float = getData("ph", false);
+        // float do_float = getData("do", false);
+        // float ec_float = getData("ec", false);
+    
+        // Send data
+        sendData("rtd", String(rtd_float));
+        getTime();
+        // sendData("ph", String(ph_float));
+        // sendData("do", String(do_float));
+        // sendData("ec", String(ec_float));
+    
+        // Wait before iterating and taking another round of readings from sensors
+        delay(10000);
+    }
 }
 
 // Toggle cellular on the device
@@ -91,7 +95,7 @@ float getData(String sensor_type, bool command_mode){
         computerdata[0] = tolower(computerdata[0]);                               
         cmd = computerdata;
     }
-    else{
+    else if(!command_mode){
         cmd = "r";
     }                               
     
@@ -124,9 +128,11 @@ float getData(String sensor_type, bool command_mode){
             }
         }
             
-        if(!command_mode)
+        if(!command_mode){
             Particle.publish(sensor_type, String(sensor_data));
-        else
+            Serial.println(sensor_type + ": " + String(sensor_data));
+        }
+        else if(serial_event)
             Serial.println(cmd + ": " + String(sensor_data));
     }
     
@@ -147,13 +153,14 @@ void sendData(String sensor_type, String endpoint){
     
     // Send data to the server
     blink(led, 1000, 1000, 1);
-    client.println("GET /insert/" + sensor_type + "/" + endpoint + " HTTP/1.0");
+    client.println("GET /api/" + sensor_type + "/" + endpoint + " HTTP/1.0");
     client.println("Host: " + ip);
     client.println("Content-Length: 0");
     client.println();
     
     // Disconnect from the server
     disconnect();
+    
 }
 
 // Get time from the server
@@ -167,13 +174,16 @@ void getTime(){
         client.println("Host: " + ip);
         client.println("Content-Length: 0");
         client.println();
-
-        // Read server response
-        if (client.available()){
+        
+        // Wait until the response is avilable
+        while(!client.available());
+        
+        // When the response is available do stuff
+        while(client.available()){
             char c = client.read();
             Serial.print(c);
         }
-        
+
         // Disconnect from the server
         disconnect();
     }
