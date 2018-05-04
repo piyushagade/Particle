@@ -1,267 +1,98 @@
-// Includes
+//**THIS CODE WILL WORK ON ANY ARDUINO**
+//This code was written to be easy to understand.
+//Modify this code as you see fit.
+//This code will output data to the Arduino serial monitor.
+//Type commands into the Arduino serial monitor to control the RTD circuit.
+
+//An Arduino UNO was used to test this code.
+//This code was written in the Arduino 1.8.5 IDE
+//This code was last tested 1/2018
+
 #include "Particle.h"
+//#include "Wire.h"                //enable I2C.
+#define address 100             // default I2C ID number for EZO EC Circuit.
 
-// Variables
-int led = D7;
-int command_mode_button = D6;
 
-// I2C addresses
-#define rtd_address 102
-#define ph_address 99
-#define do_address 97
-#define ec_address 100
 
-// Server
-TCPClient client;
-byte server[] = { 34, 210, 238, 35 };       // AWS
-String ip = "34.210.238.35";                // AWS
-int port = 1221;
+char computerdata[20];           //we make a 20 byte character array to hold incoming data from a pc/mac/other.   
+byte received_from_computer=0;   //we need to know how many characters have been received.    
+byte serial_event=0;             //a flag to signal when data has been received from the pc/mac/other. 
+byte code=0;                     //used to hold the I2C response code. 
+char RTD_data[20];               //we make a 20 byte character array to hold incoming data from the RTD circuit. 
+byte in_char=0;                  //used as a 1 byte buffer to store in bound bytes from the RTD Circuit.   
+byte i=0;                        //counter used for RTD_data array. 
+int time_=600;                   //used to change the delay needed depending on the command sent to the EZO Class RTD Circuit. 
+float tmp_float;                 //float var used to hold the float value of the RTD. 
 
-// Command mode
-bool command_mode = false;
-char computerdata[20];           // Data incoming from a computer   
-byte received_from_computer=0;   // Length of incoming data
-byte serial_event=0;             // A flag to indicate if data was received from the computer
-byte code=0;                     // Holds the I2C response code. 
-char RTD_data[20];               // Incoming data from the RTD circuit. 
-byte in_char=0;                  // Used as a 1 byte buffer to store in bound bytes from the RTD Circuit.   
-byte i=0;                        // Counter used for RTD_data array. 
-int time_=600;                   // Used to change the delay needed depending on the command sent to the EZO Class RTD Circuit. 
-float temp_float;                // Float var used to hold the float value of the RTD. 
-bool cellular_active = true; 
 
-// Device setup
-void setup(){
-    pinMode(led, OUTPUT);         // Set led pin as output
-    pinMode(command_mode_button, INPUT);         // Set led pin as output
-    
-    Serial.begin(9600);           // Enable serial port.  
-    Wire.begin();                 // Enable I2C.
+void setup()                    //hardware initialization.                
+{
+  Serial.begin(9600);           //enable serial port.  
+  Wire.begin();                 //enable I2C port.
 }
 
-// Device loop
-void loop(){
-    if(digitalRead(command_mode_button) == HIGH)
-        command_mode = false;
-    else
-        command_mode = true;
-    
-    if(command_mode){             // Check if the device needs to be in command mode, in command mode, the device waits for the serial monitor for commands.
-        getData("rtd", true);     // Put RTD sensor to command mode
-        delay(500);
-    }
-    else{
-        // Get data from the sensors
-        getSensorData();
+
+void serialEvent(){                                                       // this interrupt will trigger when the data coming from the serial monitor(pc/mac/other) is received.    
+    received_from_computer=Serial.readBytesUntil(13,computerdata,20);     // we read the data sent from the serial monitor(pc/mac/other) until we see a <CR>. We also count how many characters have been received.      
+    computerdata[received_from_computer]=0;                               // stop the buffer from transmitting leftovers or garbage.
+    serial_event = true;                                                  // set the serial event flag.
+}    
         
-        // Wait before iterating and taking another round of readings from sensors
-        delay(30000);
-    }
-}
-
-void getSensorData(){
-    // Collect data from the sensors
-    float rtd_float = getData("rtd", false);
-    // float ph_float = getData("ph", false);
-    // float do_float = getData("do", false);
-    // float ec_float = getData("ec", false);
-
-    // Send data to the server
-    sendData("rtd", String(rtd_float));
-    // sendData("ph", String(ph_float));
-    // sendData("do", String(do_float));
-    // sendData("ec", String(ec_float));
-    
-    // Get time information from the server
-    getTime("hour");
-}
-
-// Toggle cellular on the device
-void togglePower(){
-    if(cellular_active)
-        Cellular.off();
-    else
-        Cellular.on();
-    cellular_active = !cellular_active;
-}
-
-// Collect sensor data
-float getData(String sensor_type, bool command_mode){
-    int sensor_address;
-    char sensor_data[20];
-    String cmd;
-    
-    // Sensor specific actions
-    if (strcmp(sensor_type, "rtd") == 0) {
-        sensor_address = rtd_address;
-    }
-    else if (strcmp(sensor_type, "ph") == 0) {
-        sensor_address = ph_address;
-    }
-    else if (strcmp(sensor_type, "do") == 0) {
-        sensor_address = do_address;
-    }
-    else if (strcmp(sensor_type, "ec") == 0) {
-        sensor_address = ec_address;
-    }
-
-    if(command_mode && serial_event == true){
-        computerdata[0] = tolower(computerdata[0]);                               
-        cmd = computerdata;
-    }
-    else if(!command_mode){
-        cmd = "r";
-    }                               
-    
-    // Set appropriate delay
-    if(cmd[0] == 'c'|| cmd[0] == 'r')
-        time_ = 600;                                            // If a command has been sent to calibrate or take a reading we wait 600ms so that the circuit has time to take the reading.  
-    else 
-        time_ = 300;                                            // If any other command has been sent we wait only 300ms.
-    
-    // Send command to the sensor
-    Wire.beginTransmission(sensor_address);                     // Call the circuit by its ID number.  
-    Wire.write(cmd);                                            // Transmit the command that was sent through the serial port.
-    Wire.endTransmission();                                     // End the I2C data transmission. 
-    
-    if (strcmp(cmd, "sleep") != 0) {                            // If the command that has been sent is NOT the sleep command, wait the correct amount of time and request data.
-        delay(time_);                                           // Wait the correct amount of time for the circuit to complete its instruction. 
+void loop(){ 
+    if (serial_event) {                                                     //if a command was sent to the RTD circuit.
+        computerdata[0] = tolower(computerdata[0]);                               //we make sure the first char in the string is lower case
+        if(computerdata[0]=='c'||computerdata[0]=='r')
+            time_=600;                                                               //if a command has been sent to calibrate or take a reading we wait 600ms so that the circuit has time to take the reading.  
+        else time_=300;                                                            //if any other command has been sent we wait only 300ms.
         
-        Wire.requestFrom(sensor_address, 20, 1);                // Call the circuit and request 20 bytes (this may be more than we need)
-        code = Wire.read();                                     // The first byte is the response code, we read this separately.  
-        
-        // Read the response of the command sent above
-        while(Wire.available()){                                // While there are more bytes to receive.  
-            in_char = Wire.read();                              // Read the next byte.
-            sensor_data[i] = in_char;                           
-            i += 1;                                           
-            if(in_char == 0){                                   // If the byte is a null command. 
-                i = 0;                                          // Reset the counter i to 0.
-                Wire.endTransmission();                         // End the I2C data transmission.
-                break;
-            }
-        }
+        // computerdata = "m,?";
+        Wire.beginTransmission(address); //call the circuit by its ID number.  
+        Wire.write(computerdata);        //transmit the command that was sent through the serial port.
+        Wire.endTransmission();          //end the I2C data transmission. 
+    
+        if (strcmp(computerdata, "sleep") != 0) {                               //if the command that has been sent is NOT the sleep command, wait the correct amount of time and request data.
+                                                                                //if it is the sleep command, we do nothing. Issuing a sleep command and then requesting data will wake the RTD circuit.
+          
+            delay(time_);                    //wait the correct amount of time for the circuit to complete its instruction. 
             
-        if(!command_mode){
-            Particle.publish(sensor_type, String(sensor_data));
-            Serial.println("\n" + sensor_type + ": " + String(sensor_data));
-        }
-        else if(serial_event)
-            Serial.println(cmd + ": " + String(sensor_data));
+            Wire.requestFrom(address,20,1); //call the circuit and request 20 bytes (this may be more than we need)
+            code=Wire.read();               //the first byte is the response code, we read this separately.  
+            
+            switch (code){                  //switch case based on what the response code is.  
+                case 1:                       //decimal 1.  
+                    Serial.println("Success");  //means the command was successful.
+                    break;                        //exits the switch case.
+                
+                case 2:                        //decimal 2. 
+                    Serial.println("Failed");    //means the command has failed.
+                    break;                         //exits the switch case.
+                
+                case 254:                      //decimal 254.
+                    Serial.println("Pending");   //means the command has not yet been finished calculating.
+                    break;                         //exits the switch case.
+                
+                case 255:                      //decimal 255.
+                    Serial.println("No Data");   //means there is no further data to send.
+                    break;                         //exits the switch case.
+            }
+            
+         
+            while(Wire.available()){          //are there bytes to receive.  
+                in_char = Wire.read();           //receive a byte.
+                RTD_data[i]= in_char;            //load this byte into our array.
+                i+=1;                            //incur the counter for the array element. 
+                if(in_char==0){                 //if we see that we have been sent a null command. 
+                    i=0;                        //reset the counter i to 0.
+                    Wire.endTransmission();     //end the I2C data transmission.
+                    break;                      //exit the while loop.
+                }
+            }
+        } 
+        Serial.println(RTD_data);
+        serial_event=false;               //reset the serial event flag.
     }
-    
-    delay(1000);
-    if(!command_mode)
-        return atof(sensor_data);
-    else{
-        serial_event = false;
-        return 0.0;
-    }
 
+  //Uncomment this section if you want to take the RTD value and convert it into floating point number.
+  //RTD_float=atof(RTD_data); 
 }
-
-// Send data to the server
-void sendData(String sensor_type, String endpoint){
-    // Connect to the server
-    connect();
-    
-    // Send data to the server
-    blink(led, 1000, 1000, 1);
-    client.println("GET /api/" + sensor_type + "/" + endpoint + " HTTP/1.0");
-    client.println("Host: " + ip);
-    client.println("Content-Length: 0");
-    client.println();
-    
-    // Disconnect from the server
-    disconnect();
-}
-
-// Get time from the server
-void getTime(String type){
-    TCPClient client;
-    
-    // Connect and send data to the server
-    if (client.connect(ip, port)){
-        blink(led, 1000, 1000, 1);
-        client.println("GET /time/" + type + " HTTP/1.0");
-        client.println("Host: " + ip);
-        client.println("Content-Length: 0");
-        client.println();
-        
-        String response = getResponse(client);
-        
-        Serial.println(type + ": " + response);
-
-        // Disconnect from the server
-        disconnect();
-    }
-}
-
-String getResponse(TCPClient client){
-    String response = "";
-    // Wait until the response is avilable
-    while(!client.available());
-    
-    // When the response is available do stuff
-    while(client.available()){
-        char c = client.read();
-        response += c;
-        
-        // Remove HTTP header
-        if(response.endsWith("\n"))
-            response = "";
-    }
-    return response;
-}
-
-void publish(char key[], char value[]){
-    Particle.publish(String(key), String(value));
-}
-
-bool connect(){    
-    if (client.connect(ip, port)){
-        // beacon(led, 4);
-        Particle.publish("connected", "True");
-        return true;
-    }
-    else{
-        // blink(led, 2500, 500, 4);
-        Particle.publish("connected", "False");
-    }
-}
-
-void disconnect(){
-    client.stop();
-}
-
-void wait(int time){
-    delay(time);
-    beacon(led, time/1000);
-}
-
-// Blink led function
-void blink(int led, int on_time, int off_time, int repeatations){
-    for(int i = 0; i < repeatations; i++){
-        digitalWrite(led, HIGH);
-        delay(on_time);
-        digitalWrite(led, LOW);
-        delay(off_time);
-    }
-}
-
-// Beacon led function
-void beacon(int led, int repeatations){
-    for(int i = 0; i < repeatations; i++){
-        digitalWrite(led, HIGH);
-        delay(50);
-        digitalWrite(led, LOW);
-        delay(1950);
-    }
-}
-
-// Interrupt for when computer sends data
-void serialEvent(){                                                        
-    received_from_computer=Serial.readBytesUntil(13,computerdata,20);      
-    computerdata[received_from_computer]=0;                              // Stop the buffer from transmitting leftovers or garbage.
-    serial_event = true;                                                 // Set the serial event flag.
-}
+ 
