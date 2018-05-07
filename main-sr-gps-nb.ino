@@ -98,7 +98,7 @@ void setup(){
     Serial.begin(9600);                                     // Enable serial port.  
     Wire.begin();                                           // Enable I2C.
     
-    print("Setup complete");
+    print("Setup complete", true);
 }
 
 // Device loop and timing variables
@@ -117,7 +117,7 @@ void loop(){
     
     // Listen for turn off command from the server
     if(TURN_OFF_FOR > 0)
-        print("Server requested the device to sleep. Sleeping for " + String(TURN_OFF_FOR) + " milliseconds.");
+        print("Server requested the device to sleep. Sleeping for " + String(TURN_OFF_FOR) + " milliseconds.", true);
         
     while(TURN_OFF_FOR > 0){
         long now = millis();
@@ -133,7 +133,7 @@ void loop(){
         Cellular.on();
         CELLULAR_ACTIVE = 1;
         
-        print("Waking up from a server-requested sleep.");
+        print("Waking up from a server-requested sleep.", true);
     }
     
     // Battery saver
@@ -172,7 +172,7 @@ void loop(){
         }
     }
     
-    delay(4000);
+    delay(20000);
 }
 
 void getSensorData(){
@@ -189,7 +189,7 @@ void getSensorData(){
     
     // Wait for sat fix 
     if(strcmp(gpsData, "0.000000,-0.000000") == 0 && WAIT_FOR_SAT_FIX){
-        print("Waiting for a SAT fix. Hold on.");
+        print("Waiting for a SAT fix. Hold on.", true);
         
         long last_gps_fix_check_at = 0;
         while(strcmp(gpsData, "0.000000,-0.000000") == 0 && WAIT_FOR_SAT_FIX){
@@ -288,10 +288,10 @@ float getData(String sensor_type, bool command_mode){
             
         if(!COMMAND_MODE && false){
             Particle.publish(sensor_type, String(sensor_data));
-            Serial.println("\n" + sensor_type + ": " + String(sensor_data));
+            print("\n" + sensor_type + ": " + String(sensor_data), true);
         }
         else if(serial_event)
-            Serial.println(cmd + ": " + String(sensor_data));
+            print(cmd + ": " + String(sensor_data), true);
     }
     
     delay(500);                                                // Wait a moment before reading the next sensor
@@ -349,7 +349,7 @@ String getTime(String type){
 
 // Get control variables from the server
 void getControlVariables(String type){
-    print("Updating control variables");
+    print("Updating control variables", true);
     
     TCPClient client;
     
@@ -372,23 +372,66 @@ void getControlVariables(String type){
 }
 
 void updateControlVariables(String response){
-    print("Control variables updated.");
+    print(" -> Done", false);
     
-    response.replace("{", "").replace("}", "");
+    // response.replace("{", "").replace("}", "");
+    HOW_LONG_SHOULD_WE_SLEEP = (parseControlVariables(response, "HOW_LONG_SHOULD_WE_SLEEP").toInt());
+    WAIT_FOR_SAT_FIX = (parseControlVariables(response, "HOW_LONG_SHOULD_WE_SLEEP").toInt());
+    DELAY_BETWEEN_READINGS = (parseControlVariables(response, "DELAY_BETWEEN_READINGS").toInt());
+    DELAY_BETWEEN_COMMAND_MODE_ITERATIONS = (parseControlVariables(response, "DELAY_BETWEEN_COMMAND_MODE_ITERATIONS").toInt());
+    COMMAND_MODE = (parseControlVariables(response, "COMMAND_MODE").toInt());
+    COMMAND_TARGET = (parseControlVariables(response, "COMMAND_TARGET"));
+    COMMAND = (parseControlVariables(response, "COMMAND"));
+    TURN_OFF_FOR = (parseControlVariables(response, "TURN_OFF_FOR").toInt());
+    SEND_DATA_TO_SERVER = (parseControlVariables(response, "SEND_DATA_TO_SERVER").toInt());
+    LOG_DATA_TO_SERIAL = (parseControlVariables(response, "LOG_DATA_TO_SERIAL").toInt());
+}
+
+String parseControlVariables(String response, String key){
+    String pair = "";
+    String result, temp_key, value;
     
-    StringSplitter *splitter = new StringSplitter(response, ',', 20);
-    int itemCount = splitter->getItemCount();
-    
-    HOW_LONG_SHOULD_WE_SLEEP = ((new StringSplitter(splitter->getItemAtIndex(0), ':', 2))->getItemAtIndex(1)).toInt();
-    WAIT_FOR_SAT_FIX = ((new StringSplitter(splitter->getItemAtIndex(1), ':', 2))->getItemAtIndex(1)).toInt();
-    DELAY_BETWEEN_READINGS = ((new StringSplitter(splitter->getItemAtIndex(2), ':', 2))->getItemAtIndex(1)).toInt();
-    DELAY_BETWEEN_COMMAND_MODE_ITERATIONS = ((new StringSplitter(splitter->getItemAtIndex(3), ':', 2))->getItemAtIndex(1)).toInt();
-    COMMAND_MODE = ((new StringSplitter(splitter->getItemAtIndex(4), ':', 2))->getItemAtIndex(1)).toInt();
-    COMMAND_TARGET = ((new StringSplitter(splitter->getItemAtIndex(5), ':', 2))->getItemAtIndex(1));
-    COMMAND = ((new StringSplitter(splitter->getItemAtIndex(6), ':', 2))->getItemAtIndex(1));
-    TURN_OFF_FOR = ((new StringSplitter(splitter->getItemAtIndex(7), ':', 2))->getItemAtIndex(1)).toInt();
-    SEND_DATA_TO_SERVER = ((new StringSplitter(splitter->getItemAtIndex(8), ':', 2))->getItemAtIndex(1)).toInt();
-    LOG_DATA_TO_SERIAL = ((new StringSplitter(splitter->getItemAtIndex(9), ':', 2))->getItemAtIndex(1)).toInt();
+    for(int i = 0; i < response.length(); i++){
+        if(response.charAt(i) == '['){
+            
+        }
+        else{
+            if(response.charAt(i) == ',')
+                pair = "";
+            else
+                pair += String(response.charAt(i));
+            
+            // Check if the pair is what the user wants
+            // Part A: Construct the temp_key
+            bool flag_temp_key_generation_complete = false;
+            temp_key = "";
+            for(int j = 0; j < pair.length(); j++){
+                if(pair.charAt(j) == ':')   {
+                    flag_temp_key_generation_complete = true;
+                }
+                else{
+                    if(!flag_temp_key_generation_complete)
+                        temp_key += String(pair.charAt(j));
+                }
+            }
+            breakB:
+            
+            // Part B: Comapre the keys if the temp key was generated completely
+            if(key == temp_key && flag_temp_key_generation_complete){
+                // Wait until the pair is completely generated
+                value = "";
+                for(int j = pair.indexOf(':') + 1; j < pair.length(); j++)
+                    value += pair.charAt(j);
+                    
+                    // Look for the end
+                    if(response.charAt(i + 1) == ',' || response.charAt(i + 1) == ']') 
+                        return value;
+            }
+        }
+    }
+
+    // If nothing found
+    return "";
 }
 
 String getResponse(TCPClient client){
@@ -454,9 +497,12 @@ void serialEvent(){
     serial_event = true;                                                 // Set the serial event flag.
 }
 
-void print(String message){
+void print(String message, bool new_line){
     if(LOG_DATA_TO_SERIAL)
-        Serial.println(message);
+        if(new_line)
+            Serial.println(message);
+        else
+            Serial.print(message);
 }
 
 void getBatteryLevel(){
