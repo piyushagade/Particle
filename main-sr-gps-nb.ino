@@ -27,8 +27,6 @@ TCPClient client;
 byte server[] = { 34, 210, 238, 35 };       // AWS
 String ip = "34.210.238.35";                // AWS
 int port = 1221;
-bool SEND_DATA_TO_SERVER = false;
-bool LOG_DATA_TO_SERIAL = true;
 
 // Command mode variables
 char computerdata[20];              // Data/command incoming from a computer
@@ -58,15 +56,21 @@ time_t lastIdleCheckin = 0;
 bool COMMAND_MODE = 0;
 String COMMAND = "r";
 String COMMAND_TARGET = "rtd";
-int DELAY_BETWEEN_READINGS = 60 * 60 * 1000;
+int DELAY_BETWEEN_READINGS = 30 * 60 * 1000;
 int HOW_LONG_SHOULD_WE_SLEEP = 6 * 60 * 60;
 int MAX_IDLE_CHECKIN_DELAY = HOW_LONG_SHOULD_WE_SLEEP - 60;
 int WAIT_FOR_SAT_FIX = 0;
 int DELAY_BETWEEN_COMMAND_MODE_ITERATIONS = 5 * 1000;
-int DELAY_BETWEEN_CONTROL_VARS_UPDATE = 5 * 1000;
+int DELAY_BETWEEN_CONTROL_VARS_UPDATE = 10 * 60 * 1000;     // Add this to control.json?
+int DELAY_BETWEEN_HIBERNATION_HOUR_CHECKS = 20 * 60 * 1000;     // Add this to control.json?
 int DELAY_WHILE_WAIT_FOR_SAT_FIX = 6 * 1000;
+int SCHEDULED_HIBERNATION = 1;
 int TURN_OFF_FOR = 0;
-bool CELLULAR_ACTIVE = 1; 
+int REBOOT_IN_SAFE_MODE = 0;
+int SEND_DATA_TO_SERVER = 1;
+int LOG_DATA_TO_SERIAL = 1;
+int LOG_DATA_TO_CLOUD = 0;
+bool CELLULAR_ACTIVE = 1;
 
 // Device setup
 void setup(){
@@ -98,55 +102,54 @@ void setup(){
     Serial.begin(9600);                                     // Enable serial port.  
     Wire.begin();                                           // Enable I2C.
     
+    beacon(led_pin, 5);
+    
+    delay(4000);
     print("Setup complete", true);
+    print("Waking up with battery percentage at: " + String(fuel.getSoC()), true);
 }
 
 // Device loop and timing variables
 long last_sensors_probed_at = 0;
 long last_command_to_sensors_at = 0;
 long last_control_vars_updated_at = 0;
+long last_hibernation_hour_checked_at = 0;
+int hour;
 
-void loop(){
-    long now = millis();                                    // Current timestamp
-    
+void loop(){    
     // Update control variables
-    if(((now - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at == 0){   
-        last_control_vars_updated_at = now;
-        getControlVariables("all");
+    if(((millis() - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at == 0){   
+        last_control_vars_updated_at = millis();
+        getControlVariables("all?reset=true");
     }
     
-    // Listen for turn off command from the server
-    if(TURN_OFF_FOR > 0)
+    // Reboot in safe mode
+    if(REBOOT_IN_SAFE_MODE){
+        print("Server requested the device to reboot in safe mode. Rebooting in 4000 milliseconds.", true);
+        delay(4000);
+        System.enterSafeMode();
+    }
+    
+    // Listen for turn off command from the server / forced sleep
+    if(TURN_OFF_FOR > 0){
         print("Server requested the device to sleep. Sleeping for " + String(TURN_OFF_FOR) + " milliseconds.", true);
-        
-    while(TURN_OFF_FOR > 0){
-        long now = millis();
-    
-        if(CELLULAR_ACTIVE == 1){
-            Cellular.off();
-            CELLULAR_ACTIVE = 0;
-        }            
-        TURN_OFF_FOR -= 1000;
         delay(1000);
-    }
-    if(CELLULAR_ACTIVE == 0){
-        Cellular.on();
-        CELLULAR_ACTIVE = 1;
-        
-        print("Waking up from a server-requested sleep.", true);
+        System.sleep(SLEEP_MODE_DEEP, (TURN_OFF_FOR / 1000) + 1);
     }
     
-    // Battery saver
-    if(!CELLULAR_ACTIVE && false){
-        if(power_timer  >= 6 * 60 * 60 * 1000){             // Sleep for 6hrs
-            toggleCellular();                               // Turn on cellular module
-            power_timer = 0;
-        }
-        else{
-            power_timer += 1000;
-        }
-        
-        delay(1000);
+    // Scheduled hibernation
+    if(((millis() - last_hibernation_hour_checked_at) > DELAY_BETWEEN_HIBERNATION_HOUR_CHECKS) || last_hibernation_hour_checked_at == 0){
+        last_hibernation_hour_checked_at = millis();
+        hour = getTime("hour").toInt();
+    }
+    
+    // Compute hours limits for hibernation
+    int turn_off_hour = -1 + 4;                                  // 6 AM
+    int turn_on_hour = 11 + 4;                                  // 6 PM
+    if((hour >= turn_off_hour && hour <= turn_on_hour) & SCHEDULED_HIBERNATION){
+        print("Sleeping for " + String(turn_on_hour - turn_off_hour) + " hours.", true);
+        delay(10000);
+        System.sleep(SLEEP_MODE_DEEP, (turn_on_hour - turn_off_hour) * 3600);
     }
     else{
         // Check if the device needs to be put in i2c command mode
@@ -156,16 +159,16 @@ void loop(){
             COMMAND_MODE = true;
         
         // Check if the device needs to be in command mode, in command mode, the device waits for the serial monitor for commands.
-        if(COMMAND_MODE && ((now - last_command_to_sensors_at) > DELAY_BETWEEN_COMMAND_MODE_ITERATIONS) || last_command_to_sensors_at == 0){
-            last_command_to_sensors_at = now;               // Update last_sensors_probed_at
+        if(COMMAND_MODE && ((millis() - last_command_to_sensors_at) > DELAY_BETWEEN_COMMAND_MODE_ITERATIONS) || last_command_to_sensors_at == 0){
+            last_command_to_sensors_at = millis();          // Update last_sensors_probed_at
             
             getData("rtd", true);                           // Put RTD sensor to command mode
-            getData("ph", true);                         // Put pH sensor to command mode
-            getData("do", true);                         // Put DO sensor to command mode
+            getData("ph", true);                            // Put pH sensor to command mode
+            getData("do", true);                            // Put DO sensor to command mode
             getData("ec", true);                            // Put EC sensor to command mode
         }
-        else if(((now - last_sensors_probed_at) > DELAY_BETWEEN_READINGS) || last_sensors_probed_at == 0){
-            last_sensors_probed_at = now;                   // Update last_sensors_probed_at
+        else if(((millis() - last_sensors_probed_at) > DELAY_BETWEEN_READINGS) || last_sensors_probed_at == 0){
+            last_sensors_probed_at = millis();              // Update last_sensors_probed_at
             
             // Get data from the sensors and send it to the server
             getSensorData();
@@ -176,12 +179,6 @@ void loop(){
 }
 
 void getSensorData(){
-    // Collect data from the sensors
-    float rtd_float = getData("rtd", false);
-    float ph_float = 0;
-    float do_float = 0;
-    float ec_float = getData("ec", false);
-    
     // Check GPS
     checkGPS();
     delay(10);
@@ -196,21 +193,26 @@ void getSensorData(){
             long now = millis();
             
             if(((now - last_gps_fix_check_at) > DELAY_WHILE_WAIT_FOR_SAT_FIX) || last_gps_fix_check_at == 0){
+                last_gps_fix_check_at = millis();
                 blink(led_pin, 200, 200, 2);
                 checkGPS();
                 delay(10);
                 gpsData = getGPSData();
-                last_gps_fix_check_at = millis();
             }
             
-            // // Update control variables
-            // if(((now - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at == 0){  
-            //     print("Here 3"); 
-            //     last_control_vars_updated_at = now;
-            //     getControlVariables("all");
-            // }
+            // Update control variables
+            if(((now - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at == 0){  
+                last_control_vars_updated_at = now;
+                getControlVariables("all");
+            }
         }
     }
+    
+    // Collect data from the sensors
+    float rtd_float = getData("rtd", false);
+    float ph_float = 0;
+    float do_float = 0;
+    float ec_float = getData("ec", false);
     
     // Send the data to the server
     String data_str = "{\"do\":" + String(do_float) + ",\"ec\":" + String(ec_float) + ",\"ph\":" + String(ph_float) + ",\"rtd\":" + String(rtd_float) + ",\"location\":\"" + gpsData + "\"" + ",\"batt-volt\":" + fuel.getVCell() + ",\"batt-level\":" + fuel.getSoC() + ",\"utc-timestamp\":\"" + getTime("utc") + "\"}";
@@ -319,7 +321,7 @@ void sendData(String sensor_type, String data){
         client.println();
         
         // Disconnect from the server
-        disconnect();
+        disconnect(client);
     }
 }
 
@@ -341,7 +343,7 @@ String getTime(String type){
         }
 
         // Disconnect from the server
-        disconnect();
+        disconnect(client);
         
         return response;
     }
@@ -349,7 +351,7 @@ String getTime(String type){
 
 // Get control variables from the server
 void getControlVariables(String type){
-    print("Updating control variables", true);
+    print("Updating control variables", false);
     
     TCPClient client;
     
@@ -364,19 +366,18 @@ void getControlVariables(String type){
         String response = getResponse(client);
 
         // Disconnect from the server
-        disconnect();
+        disconnect(client);
         
         // Update control variables
         updateControlVariables(response);
     }
 }
 
+// Update the control variables
 void updateControlVariables(String response){
-    print(" -> Done", false);
-    
-    // response.replace("{", "").replace("}", "");
+    print(" -> Done", true);
     HOW_LONG_SHOULD_WE_SLEEP = (parseControlVariables(response, "HOW_LONG_SHOULD_WE_SLEEP").toInt());
-    WAIT_FOR_SAT_FIX = (parseControlVariables(response, "HOW_LONG_SHOULD_WE_SLEEP").toInt());
+    WAIT_FOR_SAT_FIX = (parseControlVariables(response, "WAIT_FOR_SAT_FIX").toInt());
     DELAY_BETWEEN_READINGS = (parseControlVariables(response, "DELAY_BETWEEN_READINGS").toInt());
     DELAY_BETWEEN_COMMAND_MODE_ITERATIONS = (parseControlVariables(response, "DELAY_BETWEEN_COMMAND_MODE_ITERATIONS").toInt());
     COMMAND_MODE = (parseControlVariables(response, "COMMAND_MODE").toInt());
@@ -385,15 +386,19 @@ void updateControlVariables(String response){
     TURN_OFF_FOR = (parseControlVariables(response, "TURN_OFF_FOR").toInt());
     SEND_DATA_TO_SERVER = (parseControlVariables(response, "SEND_DATA_TO_SERVER").toInt());
     LOG_DATA_TO_SERIAL = (parseControlVariables(response, "LOG_DATA_TO_SERIAL").toInt());
+    LOG_DATA_TO_CLOUD = (parseControlVariables(response, "LOG_DATA_TO_CLOUD").toInt());
+    REBOOT_IN_SAFE_MODE = (parseControlVariables(response, "REBOOT_IN_SAFE_MODE").toInt());
+    SCHEDULED_HIBERNATION = (parseControlVariables(response, "SCHEDULED_HIBERNATION").toInt());
 }
 
+// Parse the control response
 String parseControlVariables(String response, String key){
     String pair = "";
     String result, temp_key, value;
     
     for(int i = 0; i < response.length(); i++){
         if(response.charAt(i) == '['){
-            
+            // Do nothing
         }
         else{
             if(response.charAt(i) == ',')
@@ -434,6 +439,7 @@ String parseControlVariables(String response, String key){
     return "";
 }
 
+// Get response from the server
 String getResponse(TCPClient client){
     String response = "";
     // Wait until the response is avilable
@@ -444,17 +450,19 @@ String getResponse(TCPClient client){
         char c = client.read();
         response += c;
         
-        // Remove HTTP header
+        // Remove HTTP header / extract the body
         if(response.endsWith("\n"))
             response = "";
     }
     return response;
 }
 
-void publish(char key[], char value[]){
+// Publish to particle
+void publish(String key, String value){
     Particle.publish(String(key), String(value));
 }
 
+// Connect to the server
 bool connect(){    
     if (client.connect(ip, port)){
         // beacon(led, 4);
@@ -462,14 +470,16 @@ bool connect(){
     }
     else{
         blink(led_pin, 2500, 500, 4);
-        Particle.publish("connected", "False");
+        Particle.publish("connected", "false");
     }
 }
 
-void disconnect(){
+// Disconnect the server
+void disconnect(TCPClient client){
     client.stop();
 }
 
+// Wait with beacon
 void wait(int time){
     delay(time);
     beacon(led_pin, time/1000);
@@ -492,19 +502,24 @@ void beacon(int led, int repeatations){
 
 // Interrupt for when computer sends data
 void serialEvent(){                                                        
-    received_from_computer=Serial.readBytesUntil(13,computerdata,20);      
-    computerdata[received_from_computer]=0;                              // Stop the buffer from transmitting leftovers or garbage.
+    received_from_computer = Serial.readBytesUntil(13, computerdata, 20);      
+    computerdata[received_from_computer] = 0;                              // Stop the buffer from transmitting leftovers or garbage.
     serial_event = true;                                                 // Set the serial event flag.
 }
 
+// Log to serial/cloud
 void print(String message, bool new_line){
     if(LOG_DATA_TO_SERIAL)
         if(new_line)
             Serial.println(message);
         else
             Serial.print(message);
+    
+    if(LOG_DATA_TO_CLOUD)
+        publish("log", message);
 }
 
+// Get battery stat
 void getBatteryLevel(){
     float voltage, level;
     voltage = fuel.getVCell();
