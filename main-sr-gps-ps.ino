@@ -1,7 +1,8 @@
 /*
     Single reading mode.
-    Takes a reading in intervals and sends the data to the server once for every reading.
+    Takes a reading in intervals and sends the data to the server once for every reading and turn off cellular, GPS, and sensors until next reading needs to be taken.
 */
+
 
 // Includes
 #include "gps_math.h"
@@ -10,9 +11,13 @@
 #include "math.h"
 #include "ctype.h"
 
+// Retain variables between sleep cycles
+STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
+
 // Variables
 int led_pin = D7;
 int gps_pin = D6;
+int sensors_power_pin = D5;
 int command_mode_button = D4;
 
 // I2C addresses
@@ -22,21 +27,20 @@ int command_mode_button = D4;
 #define ec_address 100
 
 // Server
-TCPClient client;
-byte server[] = { 34, 210, 238, 35 };       // AWS
-String ip = "34.210.238.35";                // AWS
-int port = 1221;
+retained TCPClient client;
+retained String ip = "34.210.238.35";                                                                       // Server IP address
+retained int port = 1221;
 
 // Command mode variables
-char computerdata[20];              // Data/command incoming from a computer
-byte received_from_computer = 0;    // Length of incoming data
-byte serial_event = 0;              // A flag to indicate if data was received from the computer
-byte code = 0;                      // Holds the I2C response code. 
-char RTD_data[20];                  // Incoming data from the RTD circuit. 
-byte in_char = 0;                   // Used as a 1 byte buffer to store in bound bytes from the RTD Circuit.   
-byte i = 0;                         // Counter used for RTD_data array. 
-int time_ = 600;                    // Used to change the delay needed depending on the command sent to the EZO Class RTD Circuit. 
-float temp_float;                   // Float var used to hold the float value of the RTD. 
+char computerdata[20];                                                                                      // Data/command incoming from a computer
+byte received_from_computer = 0;                                                                            // Length of incoming data
+byte serial_event = 0;                                                                                      // A flag to indicate if data was received from the computer
+byte code = 0;                                                                                              // Holds the I2C response code. 
+char RTD_data[20];                                                                                          // Incoming data from the RTD circuit. 
+byte in_char = 0;                                                                                           // Used as a 1 byte buffer to store in bound bytes from the RTD Circuit.   
+byte i = 0;                                                                                                 // Counter used for RTD_data array. 
+int time_ = 600;                                                                                            // Used to change the delay needed depending on the command sent to the EZO Class RTD Circuit. 
+float temp_float;                                                                                           // Float var used to hold the float value of the RTD. 
 
 int power_timer = 0;
 
@@ -47,80 +51,67 @@ FuelGauge fuel;
 Adafruit_GPS GPS(&mySerial);
 int lastSecond = 0;
 bool ledState = false;
-STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 unsigned long lastPublish = 0;
 time_t lastIdleCheckin = 0;
 
 // Control variables
-bool COMMAND_MODE = 0;
-String COMMAND = "r";
-String COMMAND_TARGET = "rtd";
-int DELAY_BETWEEN_READINGS = 30 * 60 * 1000;
-int HOW_LONG_SHOULD_WE_SLEEP = 6 * 60 * 60;
-int MAX_IDLE_CHECKIN_DELAY = HOW_LONG_SHOULD_WE_SLEEP - 60;
-int WAIT_FOR_SAT_FIX = 0;
-int DELAY_BETWEEN_COMMAND_MODE_ITERATIONS = 5 * 1000;
-int DELAY_BETWEEN_CONTROL_VARS_UPDATE = 10 * 60 * 1000;     // Add this to control.json?
-int DELAY_BETWEEN_HIBERNATION_HOUR_CHECKS = 20 * 60 * 1000;     // Add this to control.json?
-int DELAY_WHILE_WAIT_FOR_SAT_FIX = 6 * 1000;
-int SCHEDULED_HIBERNATION = 1;
-int TURN_OFF_FOR = 0;
-int REBOOT_IN_SAFE_MODE = 0;
-int SEND_DATA_TO_SERVER = 1;
-int LOG_DATA_TO_SERIAL = 1;
-int LOG_DATA_TO_CLOUD = 0;
-bool CELLULAR_ACTIVE = 1;
+retained bool COMMAND_MODE = 0;
+retained String COMMAND = "r";
+retained String COMMAND_TARGET = "rtd";
+retained int DELAY_BETWEEN_READINGS = 4 * 60 * 1000;
+retained int SLEEP_DURATION_BETWEEN_READINGS = (DELAY_BETWEEN_READINGS - 2 * 60 * 1000) / 1000;             // Wake up 2 minutes before next reading is needed to be taken
+retained int HIBERNATE_FOR = 6 * 60 * 60;
+retained int WAIT_FOR_SAT_FIX = 0;
+retained int DELAY_BETWEEN_COMMAND_MODE_ITERATIONS = 5 * 1000;
+retained int DELAY_BETWEEN_CONTROL_VARS_UPDATE = 10 * 60 * 1000;                                            // Add this to control.json?
+retained int DELAY_BETWEEN_HIBERNATION_HOUR_CHECKS = 20 * 60 * 1000;                                        // Add this to control.json?
+retained int DELAY_WHILE_WAIT_FOR_SAT_FIX = 6 * 1000;
+retained int SCHEDULED_HIBERNATION = 1;
+retained int TURN_OFF_FOR = 0;
+retained int REBOOT_IN_SAFE_MODE = 0;
+retained int SEND_DATA_TO_SERVER = 1;
+retained int LOG_DATA_TO_SERIAL = 1;
+retained int LOG_DATA_TO_CLOUD = 0;
+retained bool CELLULAR_ACTIVE = 1;
+retained bool POWER_SAVER_MODE = 0;
 
 // Device setup
 void setup(){
+    print("\nSeting up the device", false);
     lastPublish = 0;
     
-    pinMode(gps_pin, OUTPUT);                               // Electron asset tracker shield needs this to enable the power to the gps module.
-    digitalWrite(gps_pin, LOW);                             // Turn GPS on
+    pinMode(sensors_power_pin, OUTPUT);
+    digitalWrite(sensors_power_pin, LOW);                                                                   // Turn off sensors
     
     pinMode(led_pin, OUTPUT);
-    digitalWrite(led_pin, LOW);
+    digitalWrite(led_pin, LOW);                                                                             // Turn off D7 LED
     
-    delay(250);                                             // Wait for the GPS to wake up
-    
-    GPS.begin(9600);
-    mySerial.begin(9600);
+    // GPS.begin(9600);
+    // mySerial.begin(9600);
     Serial.begin(9600);
     
-    GPS.sendCommand("$PMTK101*32");                         // GPS hot restart
-    delay(250);
-    
-    GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_ALLDATA);          // Request everything
-    delay(250);
-    
-    GPS.sendCommand(PGCMD_NOANTENNA);                       // turn off antenna updates
-    delay(250);
+    pinMode(gps_pin, OUTPUT);                                                                               // Electron asset tracker shield needs this to enable the power to the gps module.
+    digitalWrite(gps_pin, HIGH);                                                                            // Turn GPS off
+    delay(250); 
     
     pinMode(command_mode_button, INPUT);
     
-    Serial.begin(9600);                                     // Enable serial port.  
-    Wire.begin();                                           // Enable I2C.
+    Serial.begin(9600);                                                                                     // Enable serial port.  
+    Wire.begin();                                                                                           // Enable I2C.
     
     beacon(led_pin, 5);
     
-    delay(4000);
-    print("Setup complete", true);
-    print("Waking up with battery percentage at: " + String(fuel.getSoC()), true);
+    print(" -> Done", true);
+    print("Booting up with battery percentage at: " + String(fuel.getSoC()) + "\n", true);
 }
 
-// Device loop and timing variables
-long last_sensors_probed_at = 0;
-long last_command_to_sensors_at = 0;
-long last_control_vars_updated_at = 0;
-long last_hibernation_hour_checked_at = 0;
-int hour;
+// Loop and timing variables
+retained long last_sensors_probed_at = 0;
+retained long last_command_to_sensors_at = 0;
+retained long last_control_vars_updated_at = 0;
+retained long last_hibernation_hour_checked_at = 0;
 
-void loop(){    
-    // Update control variables
-    if(((millis() - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at == 0){   
-        last_control_vars_updated_at = millis();
-        getControlVariables("all?reset=true");
-    }
+void loop(){
     
     // Reboot in safe mode
     if(REBOOT_IN_SAFE_MODE){
@@ -129,57 +120,89 @@ void loop(){
         System.enterSafeMode();
     }
     
-    
-    Serial.println(TURN_OFF_FOR > 0, true);
-    delay(10000);
-    
-    // // Listen for turn off command from the server / forced sleep
-    // if(TURN_OFF_FOR > 0){
-    //     print("Server requested the device to sleep. Sleeping for " + String(TURN_OFF_FOR) + " milliseconds.", true);
-    //     delay(1000);
-    //     System.sleep(SLEEP_MODE_DEEP, (TURN_OFF_FOR / 1000) + 1);
-    // }
-    
-    // Scheduled hibernation
-    if(((millis() - last_hibernation_hour_checked_at) > DELAY_BETWEEN_HIBERNATION_HOUR_CHECKS) || last_hibernation_hour_checked_at == 0){
-        last_hibernation_hour_checked_at = millis();
-        hour = getTime("hour").toInt();
+    // Listen for turn off command from the server / forced sleep
+    if(TURN_OFF_FOR > 0){
+        print("Server requested the device to sleep. Sleeping for " + String(TURN_OFF_FOR) + " milliseconds.", true);
+        delay(1000);
+        System.sleep(SLEEP_MODE_DEEP, (TURN_OFF_FOR / 1000) + 1);
     }
     
-    // Compute hours limits for hibernation
-    int turn_off_hour = -1 + 4;
-    int turn_on_hour = 11 + 4;
+    // Check if the device needs to be put in i2c command mode
+    if(digitalRead(command_mode_button) == HIGH)
+        COMMAND_MODE = false;
+    else
+        COMMAND_MODE = true;
     
-    if((hour >= turn_off_hour && hour <= turn_on_hour) & SCHEDULED_HIBERNATION && false){
-        print("Sleeping for " + String(turn_on_hour - turn_off_hour) + " hours.", true);
-        delay(10000);
-        System.sleep(SLEEP_MODE_DEEP, (turn_on_hour - turn_off_hour) * 3600);
+    // Check if the device needs to be in command mode, in command mode, the device waits for the serial monitor for commands.
+    if(COMMAND_MODE && (((millis() - last_command_to_sensors_at) > DELAY_BETWEEN_COMMAND_MODE_ITERATIONS) || last_command_to_sensors_at <= 0)){
+        // Update timing variable
+        last_command_to_sensors_at = millis();
+        
+        getData("rtd", true);
+        getData("ph", true);
+        getData("do", true);
+        getData("ec", true);
+    }
+    else if(!COMMAND_MODE){
+        // Update control variables
+        getControlVariables("all?reset=true");
+        
+        // Wake the peripherals up from power saving mode
+        wakeUp();
+        
+        // Get data from the sensors and send it to the server
+        getSensorData();
+        
+        // Put the device and peripherals in power saving mode
+        goToSleep();
     }
     else{
-        // Check if the device needs to be put in i2c command mode
-        if(digitalRead(command_mode_button) == HIGH)
-            COMMAND_MODE = false;
-        else
-            COMMAND_MODE = true;
-        
-        // Check if the device needs to be in command mode, in command mode, the device waits for the serial monitor for commands.
-        if(COMMAND_MODE && ((millis() - last_command_to_sensors_at) > DELAY_BETWEEN_COMMAND_MODE_ITERATIONS) || last_command_to_sensors_at == 0){
-            last_command_to_sensors_at = millis();          // Update last_sensors_probed_at
-            
-            getData("rtd", true);                           // Put RTD sensor to command mode
-            getData("ph", true);                            // Put pH sensor to command mode
-            getData("do", true);                            // Put DO sensor to command mode
-            getData("ec", true);                            // Put EC sensor to command mode
-        }
-        else if(((millis() - last_sensors_probed_at) > DELAY_BETWEEN_READINGS) || last_sensors_probed_at == 0){
-            last_sensors_probed_at = millis();              // Update last_sensors_probed_at
-            
-            // Get data from the sensors and send it to the server
-            getSensorData();
-        }
+        delay(100);
     }
+}
+
+void wakeUp(){
+    // GPS
+    digitalWrite(gps_pin, LOW);                                 // Turn GPS on
+    delay(250); 
     
-    delay(20000);
+    GPS.begin(9600);
+    mySerial.begin(9600);
+    delay(250);
+    
+    GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+    delay(250);
+    
+    GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);              // Default is 1 Hz update rate
+    delay(250);    
+    
+    GPS.sendCommand(PGCMD_NOANTENNA);                       // Turn off antenna updates
+    delay(250);
+    
+    // GPS.sendCommand("$PMTK101*32");                         // GPS hot restart
+    // delay(250);
+    
+    GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_ALLDATA);          // Request everything
+    delay(250);
+
+    // Sensors
+    digitalWrite(sensors_power_pin, HIGH);                  // Turn sensors on
+    delay(250);
+}
+
+void goToSleep(){        
+    print("\nEntering power saving mode. Sleeping for " + String(DELAY_BETWEEN_READINGS / 60 / 1000) + " min.", true);
+    
+    // Turn GPS off
+    digitalWrite(gps_pin, HIGH);
+    delay(50);
+    
+    // Turn off the sensors
+    digitalWrite(sensors_power_pin, LOW);
+    delay(50);
+
+    // Sleep until next reading iteration (i.e. DELAY_BETWEEN_READINGS)
+    System.sleep(SLEEP_MODE_DEEP, DELAY_BETWEEN_READINGS / 1000);
 }
 
 void getSensorData(){
@@ -190,14 +213,20 @@ void getSensorData(){
     
     // Wait for sat fix 
     if(strcmp(gpsData, "0.000000,-0.000000") == 0 && WAIT_FOR_SAT_FIX){
-        print("Waiting for a SAT fix. Hold on.", true);
+        print("\nWaiting for a SAT fix. Hold on.", true);
+        
+        // Turn off the sensors
+        digitalWrite(sensors_power_pin, LOW);
+        delay(50);
         
         long last_gps_fix_check_at = 0;
         while(strcmp(gpsData, "0.000000,-0.000000") == 0 && WAIT_FOR_SAT_FIX){
             long now = millis();
             
-            if(((now - last_gps_fix_check_at) > DELAY_WHILE_WAIT_FOR_SAT_FIX) || last_gps_fix_check_at == 0){
+            if(((now - last_gps_fix_check_at) > DELAY_WHILE_WAIT_FOR_SAT_FIX) || last_gps_fix_check_at <= 0){
+                // Update timing variable
                 last_gps_fix_check_at = millis();
+                
                 blink(led_pin, 200, 200, 2);
                 checkGPS();
                 delay(10);
@@ -205,31 +234,42 @@ void getSensorData(){
             }
             
             // Update control variables
-            if(((now - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at == 0){  
+            if(((now - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at <= 0){  
+                // Update timing variable
                 last_control_vars_updated_at = now;
+                
                 getControlVariables("all");
             }
+            
+            print(".", false);
+            delay(1000);
         }
     }
+    print("", true);
+    
+    
+    // Turn on the sensors if off
+    digitalWrite(sensors_power_pin, HIGH);
+    delay(50);
+    
+    print("Reading sensors", false);
     
     // Collect data from the sensors
-    float rtd_float = getData("rtd", false);
-    float ph_float = 0;
-    float do_float = 0;
-    float ec_float = getData("ec", false);
+    float rtd_float = -111;
+    float ph_float = -111;
+    float do_float = -111;
+    float ec_float = -111;
+    
+    rtd_float = getData("rtd", false);
+    ph_float = getData("ph", false);
+    do_float = getData("do", false);
+    ec_float = getData("ec", false);
+    
+    print(" -> Done", true);
     
     // Send the data to the server
     String data_str = "{\"do\":" + String(do_float) + ",\"ec\":" + String(ec_float) + ",\"ph\":" + String(ph_float) + ",\"rtd\":" + String(rtd_float) + ",\"location\":\"" + gpsData + "\"" + ",\"batt-volt\":" + fuel.getVCell() + ",\"batt-level\":" + fuel.getSoC() + ",\"utc-timestamp\":\"" + getTime("utc") + "\"}";
     sendData("all", data_str);
-}
-
-// Toggle cellular on the device
-void toggleCellular(){
-    if(CELLULAR_ACTIVE)
-        Cellular.off();
-    else
-        Cellular.on();
-    CELLULAR_ACTIVE = !CELLULAR_ACTIVE;
 }
 
 // Collect sensor data
@@ -314,6 +354,8 @@ float getData(String sensor_type, bool command_mode){
 // Send data to the server
 void sendData(String sensor_type, String data){
     if(SEND_DATA_TO_SERVER){
+        print("Sending data to the server", false);
+        
         // Connect to the server
         connect();
         
@@ -324,8 +366,18 @@ void sendData(String sensor_type, String data){
         client.println("Content-Length: 0");
         client.println();
         
+        String response = getResponse(client);
+        
+        if(strcmp(response, "true") == 0)
+            print(" -> Done", true);
+        else{
+            print(" -> Error. That did not work.", true);
+            print("Error message: " + response, true);
+        }
+            
         // Disconnect from the server
         disconnect(client);
+        
     }
 }
 
@@ -376,7 +428,9 @@ void getControlVariables(String type){
 // Update the control variables
 void updateControlVariables(String response){
     print(" -> Done", true);
-    HOW_LONG_SHOULD_WE_SLEEP = (parseControlVariables(response, "HOW_LONG_SHOULD_WE_SLEEP").toInt());
+
+    // Update variables from server
+    HIBERNATE_FOR = (parseControlVariables(response, "HIBERNATE_FOR").toInt());
     WAIT_FOR_SAT_FIX = (parseControlVariables(response, "WAIT_FOR_SAT_FIX").toInt());
     DELAY_BETWEEN_READINGS = (parseControlVariables(response, "DELAY_BETWEEN_READINGS").toInt());
     DELAY_BETWEEN_COMMAND_MODE_ITERATIONS = (parseControlVariables(response, "DELAY_BETWEEN_COMMAND_MODE_ITERATIONS").toInt());
@@ -389,6 +443,9 @@ void updateControlVariables(String response){
     LOG_DATA_TO_CLOUD = (parseControlVariables(response, "LOG_DATA_TO_CLOUD").toInt());
     REBOOT_IN_SAFE_MODE = (parseControlVariables(response, "REBOOT_IN_SAFE_MODE").toInt());
     SCHEDULED_HIBERNATION = (parseControlVariables(response, "SCHEDULED_HIBERNATION").toInt());
+    
+    // Update dependent variables
+    SLEEP_DURATION_BETWEEN_READINGS = (DELAY_BETWEEN_READINGS - 2 * 60 * 1000) / 1000;
 }
 
 // Parse the control response
