@@ -1,6 +1,10 @@
 /*
     Single reading mode.
     Takes a reading in intervals and sends the data to the server once for every reading and turn off cellular, GPS, and sensors until next reading needs to be taken.
+    
+    LED Codes:
+    5 beacons (once): Setup
+    2 blinks (every six seconds): Waiting for sat fix
 */
 
 
@@ -36,23 +40,16 @@ char computerdata[20];                                                          
 byte received_from_computer = 0;                                                                            // Length of incoming data
 byte serial_event = 0;                                                                                      // A flag to indicate if data was received from the computer
 byte code = 0;                                                                                              // Holds the I2C response code. 
-char RTD_data[20];                                                                                          // Incoming data from the RTD circuit. 
 byte in_char = 0;                                                                                           // Used as a 1 byte buffer to store in bound bytes from the RTD Circuit.   
 byte i = 0;                                                                                                 // Counter used for RTD_data array. 
 int time_ = 600;                                                                                            // Used to change the delay needed depending on the command sent to the EZO Class RTD Circuit. 
-float temp_float;                                                                                           // Float var used to hold the float value of the RTD. 
 
-int power_timer = 0;
-
+// Fuel gauge
 FuelGauge fuel;
 
 // GPS variables
 #define mySerial Serial1
 Adafruit_GPS GPS(&mySerial);
-int lastSecond = 0;
-bool ledState = false;
-unsigned long lastPublish = 0;
-time_t lastIdleCheckin = 0;
 
 // Control variables
 retained bool COMMAND_MODE = 0;
@@ -72,23 +69,19 @@ retained int REBOOT_IN_SAFE_MODE = 0;
 retained int SEND_DATA_TO_SERVER = 1;
 retained int LOG_DATA_TO_SERIAL = 1;
 retained int LOG_DATA_TO_CLOUD = 0;
-retained bool CELLULAR_ACTIVE = 1;
-retained bool POWER_SAVER_MODE = 0;
+retained int RESET_CONTROL_VARIABLES = 0;
 
 // Device setup
 void setup(){
-    print("\nSeting up the device", false);
-    lastPublish = 0;
+    beacon(led_pin, 5);
     
-    pinMode(sensors_power_pin, OUTPUT);
+    print("\nSeting up the device", false);
+    
+    pinMode(sensors_power_pin, OUTPUT);                                                                     // Enable pin for sensors
     digitalWrite(sensors_power_pin, LOW);                                                                   // Turn off sensors
     
-    pinMode(led_pin, OUTPUT);
-    digitalWrite(led_pin, LOW);                                                                             // Turn off D7 LED
-    
-    // GPS.begin(9600);
-    // mySerial.begin(9600);
-    Serial.begin(9600);
+    pinMode(led_pin, OUTPUT);                                                                               // D7 LED
+    digitalWrite(led_pin, LOW);                                                                             // Turn off D7 LED                                                                                   
     
     pinMode(gps_pin, OUTPUT);                                                                               // Electron asset tracker shield needs this to enable the power to the gps module.
     digitalWrite(gps_pin, HIGH);                                                                            // Turn GPS off
@@ -98,8 +91,6 @@ void setup(){
     
     Serial.begin(9600);                                                                                     // Enable serial port.  
     Wire.begin();                                                                                           // Enable I2C.
-    
-    beacon(led_pin, 5);
     
     print(" -> Done", true);
     print("Booting up with battery percentage at: " + String(fuel.getSoC()) + "\n", true);
@@ -112,6 +103,15 @@ retained long last_control_vars_updated_at = 0;
 retained long last_hibernation_hour_checked_at = 0;
 
 void loop(){
+    // Update control variables
+    getControlVariables("all?reset=true");
+
+    // Reset control variables
+    if(RESET_CONTROL_VARIABLES){
+        print("Resetting control variables to default", false);
+        delay(1000);
+        resetControlVariables();
+    }
     
     // Reboot in safe mode
     if(REBOOT_IN_SAFE_MODE){
@@ -138,15 +138,12 @@ void loop(){
         // Update timing variable
         last_command_to_sensors_at = millis();
         
-        getData("rtd", true);
-        getData("ph", true);
-        getData("do", true);
-        getData("ec", true);
+        if(strcmp(COMMAND_TARGET, "rtd")) getData("rtd", true);
+        if(strcmp(COMMAND_TARGET, "ph")) getData("ph", true);
+        if(strcmp(COMMAND_TARGET, "do")) getData("do", true);
+        if(strcmp(COMMAND_TARGET, "ec")) getData("ec", true);
     }
     else if(!COMMAND_MODE){
-        // Update control variables
-        getControlVariables("all?reset=true");
-        
         // Wake the peripherals up from power saving mode
         wakeUp();
         
@@ -173,20 +170,20 @@ void wakeUp(){
     GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
     delay(250);
     
-    GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);              // Default is 1 Hz update rate
+    GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);                  // Default is 1 Hz update rate
     delay(250);    
     
-    GPS.sendCommand(PGCMD_NOANTENNA);                       // Turn off antenna updates
+    GPS.sendCommand(PGCMD_NOANTENNA);                           // Turn off antenna updates
     delay(250);
     
-    // GPS.sendCommand("$PMTK101*32");                         // GPS hot restart
+    // GPS.sendCommand("$PMTK101*32");                          // GPS hot restart
     // delay(250);
     
-    GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_ALLDATA);          // Request everything
+    GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_ALLDATA);              // Request everything
     delay(250);
 
     // Sensors
-    digitalWrite(sensors_power_pin, HIGH);                  // Turn sensors on
+    digitalWrite(sensors_power_pin, HIGH);                      // Turn sensors on
     delay(250);
 }
 
@@ -356,34 +353,35 @@ void sendData(String sensor_type, String data){
     if(SEND_DATA_TO_SERVER){
         print("Sending data to the server", false);
         
-        // Connect to the server
-        connect();
-        
         // Send data to the server
-        blink(led_pin, 200, 200, 4);
-        client.println("GET /api/" + sensor_type + "/" + data + " HTTP/1.0");
-        client.println("Host: " + ip);
-        client.println("Content-Length: 0");
-        client.println();
-        
-        String response = getResponse(client);
-        
-        if(strcmp(response, "true") == 0)
-            print(" -> Done", true);
-        else{
-            print(" -> Error. That did not work.", true);
-            print("Error message: " + response, true);
-        }
+        if (client.connect(ip, port)){
+            blink(led_pin, 200, 200, 4);
+            client.println("GET /api/" + sensor_type + "/" + data + " HTTP/1.0");
+            client.println("Host: " + ip);
+            client.println("Content-Length: 0");
+            client.println();
             
-        // Disconnect from the server
-        disconnect(client);
-        
+            String response = getResponse();
+            
+            if(strcmp(response, "true") == 0)
+                print(" -> Done", true);
+            else{
+                print(" -> Error. That did not work.", true);
+                print("Error message: " + response, true);
+            }
+                
+            // Disconnect from the server
+            disconnect();
+        }
+        else{
+            print(" -> Server unavailable", true);
+        }
     }
 }
 
 // Get time from the server
 String getTime(String type){
-    TCPClient client;
+    // TCPClient client;
     
     // Connect and send data to the server
     if (client.connect(ip, port)){
@@ -392,10 +390,10 @@ String getTime(String type){
         client.println("Content-Length: 0");
         client.println();
         
-        String response = getResponse(client);
+        String response = getResponse();
 
         // Disconnect from the server
-        disconnect(client);
+        disconnect();
         
         return response;
     }
@@ -405,7 +403,7 @@ String getTime(String type){
 void getControlVariables(String type){
     print("Updating control variables", false);
     
-    TCPClient client;
+    // TCPClient client;
     
     // Connect and send data to the server
     if (client.connect(ip, port)){
@@ -415,13 +413,16 @@ void getControlVariables(String type){
         client.println("Content-Length: 0");
         client.println();
         
-        String response = getResponse(client);
+        String response = getResponse();
 
         // Disconnect from the server
-        disconnect(client);
+        disconnect();
         
         // Update control variables
         updateControlVariables(response);
+    }
+    else{
+        print(" -> Server unavailable", true);
     }
 }
 
@@ -443,9 +444,31 @@ void updateControlVariables(String response){
     LOG_DATA_TO_CLOUD = (parseControlVariables(response, "LOG_DATA_TO_CLOUD").toInt());
     REBOOT_IN_SAFE_MODE = (parseControlVariables(response, "REBOOT_IN_SAFE_MODE").toInt());
     SCHEDULED_HIBERNATION = (parseControlVariables(response, "SCHEDULED_HIBERNATION").toInt());
+    RESET_CONTROL_VARIABLES = (parseControlVariables(response, "RESET_CONTROL_VARIABLES").toInt());
     
     // Update dependent variables
     SLEEP_DURATION_BETWEEN_READINGS = (DELAY_BETWEEN_READINGS - 2 * 60 * 1000) / 1000;
+}
+
+void resetControlVariables(){
+    COMMAND_MODE = 0;
+    COMMAND = "r";
+    COMMAND_TARGET = "rtd";
+    DELAY_BETWEEN_READINGS = 4 * 60 * 1000;
+    SLEEP_DURATION_BETWEEN_READINGS = (DELAY_BETWEEN_READINGS - 2 * 60 * 1000) / 1000;
+    HIBERNATE_FOR = 6 * 60 * 60;
+    WAIT_FOR_SAT_FIX = 0;
+    DELAY_BETWEEN_COMMAND_MODE_ITERATIONS = 5 * 1000;
+    DELAY_BETWEEN_CONTROL_VARS_UPDATE = 10 * 60 * 1000;
+    DELAY_BETWEEN_HIBERNATION_HOUR_CHECKS = 20 * 60 * 1000;
+    DELAY_WHILE_WAIT_FOR_SAT_FIX = 6 * 1000;
+    SCHEDULED_HIBERNATION = 1;
+    TURN_OFF_FOR = 0;
+    REBOOT_IN_SAFE_MODE = 0;
+    SEND_DATA_TO_SERVER = 1;
+    LOG_DATA_TO_CLOUD = 0;
+
+    print(" -> Done", true);
 }
 
 // Parse the control response
@@ -497,7 +520,8 @@ String parseControlVariables(String response, String key){
 }
 
 // Get response from the server
-String getResponse(TCPClient client){
+String getResponse(){
+    
     String response = "";
     // Wait until the response is avilable
     while(!client.available());
@@ -511,6 +535,7 @@ String getResponse(TCPClient client){
         if(response.endsWith("\n"))
             response = "";
     }
+    
     return response;
 }
 
@@ -522,7 +547,6 @@ void publish(String key, String value){
 // Connect to the server
 bool connect(){    
     if (client.connect(ip, port)){
-        // beacon(led, 4);
         return true;
     }
     else{
@@ -532,7 +556,7 @@ bool connect(){
 }
 
 // Disconnect the server
-void disconnect(TCPClient client){
+void disconnect(){
     client.stop();
 }
 
@@ -560,8 +584,8 @@ void beacon(int led, int repeatations){
 // Interrupt for when computer sends data
 void serialEvent(){                                                        
     received_from_computer = Serial.readBytesUntil(13, computerdata, 20);      
-    computerdata[received_from_computer] = 0;                              // Stop the buffer from transmitting leftovers or garbage.
-    serial_event = true;                                                 // Set the serial event flag.
+    computerdata[received_from_computer] = 0;                                       // Stop the buffer from transmitting leftovers or garbage.
+    serial_event = true;                                                            // Set the serial event flag.
 }
 
 // Log to serial/cloud
@@ -597,17 +621,6 @@ void checkGPS() {
 }
 
 String getGPSData() {
-    String gps_line =
-          "{\"lat\":"    + String(convertDegMinToDecDeg(GPS.latitude))
-        + ",\"lon\":-"   + String(convertDegMinToDecDeg(GPS.longitude))
-        + ",\"a\":"     + String(GPS.altitude)
-        + ",\"q\":"     + String(GPS.fixquality)
-        + ",\"spd\":"   + String(GPS.speed)
-        + ",\"s\": "  + String(GPS.satellites)
-        + ",\"vcc\":"   + String(fuel.getVCell())
-        + ",\"soc\":"   + String(fuel.getSoC())
-        + "}";
-    
     return String(convertDegMinToDecDeg(GPS.latitude)) + "," + "-" + String(convertDegMinToDecDeg(GPS.longitude));
 }
 

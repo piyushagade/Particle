@@ -120,6 +120,7 @@ void loop(){
     if(((millis() - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at == 0){   
         last_control_vars_updated_at = millis();
         getControlVariables("all?reset=true");
+<<<<<<< HEAD
     }
     
     // Reboot in safe mode
@@ -140,6 +141,24 @@ void loop(){
     //     System.sleep(SLEEP_MODE_DEEP, (TURN_OFF_FOR / 1000) + 1);
     // }
     
+=======
+    }
+    
+    // Reboot in safe mode
+    if(REBOOT_IN_SAFE_MODE){
+        print("Server requested the device to reboot in safe mode. Rebooting in 4000 milliseconds.", true);
+        delay(4000);
+        System.enterSafeMode();
+    }
+    
+    // Listen for turn off command from the server / forced sleep
+    if(TURN_OFF_FOR > 0){
+        print("Server requested the device to sleep. Sleeping for " + String(TURN_OFF_FOR) + " milliseconds.", true);
+        delay(1000);
+        System.sleep(SLEEP_MODE_DEEP, (TURN_OFF_FOR / 1000) + 1);
+    }
+    
+>>>>>>> 62c2c11a2b0536d1d9e74fb64a38a849a92912e7
     // Scheduled hibernation
     if(((millis() - last_hibernation_hour_checked_at) > DELAY_BETWEEN_HIBERNATION_HOUR_CHECKS) || last_hibernation_hour_checked_at == 0){
         last_hibernation_hour_checked_at = millis();
@@ -147,10 +166,16 @@ void loop(){
     }
     
     // Compute hours limits for hibernation
+<<<<<<< HEAD
     int turn_off_hour = -1 + 4;
     int turn_on_hour = 11 + 4;
     
     if((hour >= turn_off_hour && hour <= turn_on_hour) & SCHEDULED_HIBERNATION && false){
+=======
+    int turn_off_hour = -1 + 4;                                  // 6 AM
+    int turn_on_hour = 11 + 4;                                  // 6 PM
+    if((hour >= turn_off_hour && hour <= turn_on_hour) & SCHEDULED_HIBERNATION){
+>>>>>>> 62c2c11a2b0536d1d9e74fb64a38a849a92912e7
         print("Sleeping for " + String(turn_on_hour - turn_off_hour) + " hours.", true);
         delay(10000);
         System.sleep(SLEEP_MODE_DEEP, (turn_on_hour - turn_off_hour) * 3600);
