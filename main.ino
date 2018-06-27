@@ -15,6 +15,8 @@
 #include "math.h"
 #include "ctype.h"
 
+SYSTEM_MODE(MANUAL);
+
 // Retain variables between sleep cycles
 STARTUP(System.enableFeature(FEATURE_RETAINED_MEMORY));
 
@@ -70,6 +72,8 @@ retained int SEND_DATA_TO_SERVER = 1;
 retained int LOG_DATA_TO_SERIAL = 1;
 retained int LOG_DATA_TO_CLOUD = 0;
 retained int RESET_CONTROL_VARIABLES = 0;
+retained int NUMBER_OF_WAITS_FOR_SAT_FIX = 20;
+int number_of_sat_fix_checks = 0;
 
 // Device setup
 void setup(){
@@ -103,6 +107,13 @@ retained long last_control_vars_updated_at = 0;
 retained long last_hibernation_hour_checked_at = 0;
 
 void loop(){
+    
+    // Turn cellular module on
+    Cellular.on();
+    
+    // Connect to a cellular network
+    Cellular.connect();
+    
     // Update control variables
     getControlVariables("all?reset=true");
 
@@ -138,14 +149,18 @@ void loop(){
         // Update timing variable
         last_command_to_sensors_at = millis();
         
-        if(strcmp(COMMAND_TARGET, "rtd")) getData("rtd", true);
-        if(strcmp(COMMAND_TARGET, "ph")) getData("ph", true);
-        if(strcmp(COMMAND_TARGET, "do")) getData("do", true);
-        if(strcmp(COMMAND_TARGET, "ec")) getData("ec", true);
+        if(strcmp(COMMAND_TARGET, "rtd")) 
+            sendI2CCommand("rtd", true);
+        if(strcmp(COMMAND_TARGET, "ph")) 
+            sendI2CCommand("ph", true);
+        if(strcmp(COMMAND_TARGET, "do")) 
+            sendI2CCommand("do", true);
+        if(strcmp(COMMAND_TARGET, "ec")) 
+            sendI2CCommand("ec", true);
     }
     else if(!COMMAND_MODE){
-        // Wake the peripherals up from power saving mode
-        wakeUp();
+        // Wake GPS up from power saving mode
+        wakeGPSUp();
         
         // Get data from the sensors and send it to the server
         getSensorData();
@@ -158,8 +173,7 @@ void loop(){
     }
 }
 
-void wakeUp(){
-    // GPS
+void wakeGPSUp(){
     digitalWrite(gps_pin, LOW);                                 // Turn GPS on
     delay(250); 
     
@@ -176,17 +190,37 @@ void wakeUp(){
     GPS.sendCommand(PGCMD_NOANTENNA);                           // Turn off antenna updates
     delay(250);
     
-    // GPS.sendCommand("$PMTK101*32");                          // GPS hot restart
-    // delay(250);
+    GPS.sendCommand("$PMTK101*32");                             // GPS hot restart
+    delay(250);
     
     GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_ALLDATA);              // Request everything
     delay(250);
+    
+    if(mySerial.available()){                                   // Use external antenna
+        uint8_t externalANT[] = {0xB5,0x62,0x06,0x13,0x04,0x00,0x01,0x00,0xF0,0x7D,0x8B,0x2E};
+        for(uint8_t i = 0; i < 12; i++)
+            GPS.sendCommand(String(externalANT[i]));
+    }
+}
 
-    // Sensors
-    digitalWrite(sensors_power_pin, HIGH);                      // Turn sensors on
+// Wake up the sensors
+void wakeSensorsUp(){
+    digitalWrite(sensors_power_pin, HIGH);
     delay(250);
 }
 
+// Turn cellular module and connect to the network
+void connectCellular(){
+    if(!Cellular.ready()){
+        // Turn cellular module on
+        Cellular.on();
+        
+        // Connect to a cellular network
+        Cellular.connect();
+    }
+}
+
+// Enter power saving mode
 void goToSleep(){        
     print("\nEntering power saving mode. Sleeping for " + String(DELAY_BETWEEN_READINGS / 60 / 1000) + " min.", true);
     
@@ -203,35 +237,44 @@ void goToSleep(){
 }
 
 void getSensorData(){
+    
     // Check GPS
     checkGPS();
-    delay(10);
+    delay(800);
     String gpsData = getGPSData();
     
     // Wait for sat fix 
-    if(strcmp(gpsData, "0.000000,-0.000000") == 0 && WAIT_FOR_SAT_FIX){
+    if(gpsData.indexOf("0.0") > -1 && WAIT_FOR_SAT_FIX){
         print("\nWaiting for a SAT fix. Hold on.", true);
+        
+        // Turn cellular module off
+        Cellular.off();
         
         // Turn off the sensors
         digitalWrite(sensors_power_pin, LOW);
         delay(50);
         
         long last_gps_fix_check_at = 0;
-        while(strcmp(gpsData, "0.000000,-0.000000") == 0 && WAIT_FOR_SAT_FIX){
+        number_of_sat_fix_checks = 0;
+        while((gpsData.indexOf("0.0") > -1 || gpsData.indexOf(".000000") > -1) && WAIT_FOR_SAT_FIX){
             long now = millis();
             
             if(((now - last_gps_fix_check_at) > DELAY_WHILE_WAIT_FOR_SAT_FIX) || last_gps_fix_check_at <= 0){
                 // Update timing variable
                 last_gps_fix_check_at = millis();
+                number_of_sat_fix_checks += 1;
+                
+                if(number_of_sat_fix_checks > NUMBER_OF_WAITS_FOR_SAT_FIX)
+                    break;
                 
                 blink(led_pin, 200, 200, 2);
                 checkGPS();
-                delay(10);
+                delay(800);
                 gpsData = getGPSData();
             }
             
             // Update control variables
-            if(((now - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at <= 0){  
+            if(((now - last_control_vars_updated_at) > DELAY_BETWEEN_CONTROL_VARS_UPDATE) || last_control_vars_updated_at <= 0){
                 // Update timing variable
                 last_control_vars_updated_at = now;
                 
@@ -242,12 +285,13 @@ void getSensorData(){
             delay(1000);
         }
     }
-    print("", true);
+    print("\n", true);
     
+    // Connect to the cellular network
+    connectCellular();
     
-    // Turn on the sensors if off
-    digitalWrite(sensors_power_pin, HIGH);
-    delay(50);
+    // Turn on the sensors
+    wakeSensorsUp();
     
     print("Reading sensors", false);
     
@@ -257,20 +301,20 @@ void getSensorData(){
     float do_float = -111;
     float ec_float = -111;
     
-    rtd_float = getData("rtd", false);
-    ph_float = getData("ph", false);
-    do_float = getData("do", false);
-    ec_float = getData("ec", false);
+    rtd_float = sendI2CCommand("rtd", false);
+    ph_float = sendI2CCommand("ph", false);
+    do_float = sendI2CCommand("do", false);
+    ec_float = sendI2CCommand("ec", false);
     
     print(" -> Done", true);
     
     // Send the data to the server
-    String data_str = "{\"do\":" + String(do_float) + ",\"ec\":" + String(ec_float) + ",\"ph\":" + String(ph_float) + ",\"rtd\":" + String(rtd_float) + ",\"location\":\"" + gpsData + "\"" + ",\"batt-volt\":" + fuel.getVCell() + ",\"batt-level\":" + fuel.getSoC() + ",\"utc-timestamp\":\"" + getTime("utc") + "\"}";
+    String data_str = "{\"do\":" + String(do_float) + ",\"ec\":" + String(ec_float) + ",\"ph\":" + String(ph_float) + ",\"rtd\":" + String(rtd_float) + ",\"location\":\"" + gpsData + "\"" +  + ",\"number_of_sat_fix_checks\":\"" + number_of_sat_fix_checks + "\"" + ",\"batt-volt\":" + fuel.getVCell() + ",\"batt-level\":" + fuel.getSoC() + ",\"utc-timestamp\":\"" + getTime("utc") + "\"}";
     sendData("all", data_str);
 }
 
 // Collect sensor data
-float getData(String sensor_type, bool command_mode){
+float sendI2CCommand(String sensor_type, bool command_mode){
     int sensor_address;
     char sensor_data[20];
     String cmd;
@@ -381,7 +425,6 @@ void sendData(String sensor_type, String data){
 
 // Get time from the server
 String getTime(String type){
-    // TCPClient client;
     
     // Connect and send data to the server
     if (client.connect(ip, port)){
@@ -402,8 +445,6 @@ String getTime(String type){
 // Get control variables from the server
 void getControlVariables(String type){
     print("Updating control variables", false);
-    
-    // TCPClient client;
     
     // Connect and send data to the server
     if (client.connect(ip, port)){
@@ -445,6 +486,7 @@ void updateControlVariables(String response){
     REBOOT_IN_SAFE_MODE = (parseControlVariables(response, "REBOOT_IN_SAFE_MODE").toInt());
     SCHEDULED_HIBERNATION = (parseControlVariables(response, "SCHEDULED_HIBERNATION").toInt());
     RESET_CONTROL_VARIABLES = (parseControlVariables(response, "RESET_CONTROL_VARIABLES").toInt());
+    NUMBER_OF_WAITS_FOR_SAT_FIX = (parseControlVariables(response, "NUMBER_OF_WAITS_FOR_SAT_FIX").toInt());
     
     // Update dependent variables
     SLEEP_DURATION_BETWEEN_READINGS = (DELAY_BETWEEN_READINGS - 2 * 60 * 1000) / 1000;
